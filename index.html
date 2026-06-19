@@ -133,7 +133,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
         }
         .nav-btn {
             width: 44px;
@@ -160,6 +160,33 @@
             font-size: 1.3rem;
             font-weight: 800;
             color: #0a2f6c;
+        }
+        .city-filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .city-filter-bar label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #0a2f6c;
+        }
+        .city-filter-bar select {
+            padding: 5px 12px;
+            border-radius: 60px;
+            border: 1px solid #cbd5e1;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.78rem;
+            background: white;
+            color: #1e293b;
+            cursor: pointer;
+        }
+        .city-filter-bar select:focus {
+            outline: none;
+            border-color: #d32f2f;
+            box-shadow: 0 0 0 3px rgba(211, 47, 47, 0.15);
         }
         .weekdays-row {
             display: grid;
@@ -489,6 +516,20 @@
                     <span class="month-title" id="monthTitle">Janeiro 2026</span>
                     <button class="nav-btn" id="nextMonth" aria-label="Próximo mês">▶</button>
                 </div>
+
+                <!-- FILTRO POR MUNICÍPIO -->
+                <div class="city-filter-bar">
+                    <label for="cityFilter">Município:</label>
+                    <select id="cityFilter">
+                        <option value="Todos">Todos</option>
+                        <option value="Caieiras">Caieiras</option>
+                        <option value="Cajamar">Cajamar</option>
+                        <option value="Francisco Morato">Francisco Morato</option>
+                        <option value="Franco da Rocha">Franco da Rocha</option>
+                        <option value="Mairiporã">Mairiporã</option>
+                    </select>
+                </div>
+
                 <div class="weekdays-row" id="weekdaysRow"></div>
                 <div class="filter-bar" id="filterBar"></div>
                 <div class="days-grid" id="daysGrid"></div>
@@ -520,7 +561,7 @@
     </div>
 </div>
 
-<!-- ==================== FIREBASE SDK E CÓDIGO CORRIGIDO ==================== -->
+<!-- ==================== FIREBASE SDK E CÓDIGO MODIFICADO ==================== -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 
@@ -543,6 +584,7 @@
     const database = firebase.database();
 
     // ========== DADOS E VARIÁVEIS ==========
+    // Categorias incluindo as novas municipais
     const CATEGORIES = [
         { key:'Férias docentes',                          raw:'#2563eb', group:'Ano letivo' },
         { key:'Recesso escolar',                          raw:'#6366f1', group:'Ano letivo' },
@@ -561,6 +603,9 @@
         { key:'OLISP',                                    raw:'#991b1b', group:'Olimpíadas' },
         { key:'Registro de percurso AF', raw:'#e91e63', group:'Avaliações' },
         { key:'Atividade final de unidade ALURA', raw:'#ffd700', group:'Avaliações' },
+        // Novas categorias municipais
+        { key:'Aniversário da cidade', raw:'#f59e0b', group:'Municipal' },
+        { key:'Padroeiro(a)', raw:'#8b5cf6', group:'Municipal' },
         { key:'Outro',                                    raw:'#78716c', group:'Outros' }
     ];
 
@@ -575,6 +620,7 @@
     let selectedDateKey = null;
     let events = {};
     let activeFilters = new Set();
+    let selectedCity = 'Todos';
     let isLoading = true;
 
     const $ = id => document.getElementById(id);
@@ -590,6 +636,7 @@
     const $heroSub = $('heroSub');
     const $heroTotal = $('heroTotal');
     const $heroFeriados = $('heroFeriados');
+    const $cityFilter = $('cityFilter');
 
     // ========== FUNÇÕES AUXILIARES ==========
     function dk(y,m,d){ return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
@@ -608,13 +655,19 @@
 
     // ========== OPERAÇÕES NO FIREBASE ==========
 
-    // Carrega os eventos do Firebase
     async function loadEventsFromFirebase() {
         try {
             const snapshot = await database.ref('events').once('value');
             const data = snapshot.val();
             if (data && typeof data === 'object') {
                 events = data;
+                // Garantir que todo evento tenha campo city (vazio se não tiver)
+                for (const dateKey in events) {
+                    events[dateKey] = events[dateKey].map(e => {
+                        if (!e.city) e.city = '';
+                        return e;
+                    });
+                }
                 console.log('✅ Dados carregados do Firebase:', Object.keys(events).length, 'dias com eventos');
             } else {
                 events = {};
@@ -622,7 +675,6 @@
             }
         } catch (error) {
             console.error('❌ Erro ao carregar do Firebase:', error);
-            // Fallback para localStorage (caso exista)
             try {
                 const local = localStorage.getItem('ped_events_2026_v3');
                 if (local) {
@@ -637,31 +689,31 @@
         }
     }
 
-    // Salva todos os eventos no Firebase (sobrescreve)
     async function saveEventsToFirebase() {
         try {
             await database.ref('events').set(events);
             console.log('✅ Dados salvos no Firebase');
         } catch (error) {
             console.error('❌ Erro ao salvar no Firebase:', error);
-            // Salva no localStorage como backup
             try {
                 localStorage.setItem('ped_events_2026_v3', JSON.stringify(events));
             } catch(e) {}
         }
     }
 
-    // ========== SEED DE DADOS PADRÃO ==========
-    function addBulkEvent(dates, type, desc) {
+    // ========== SEED DE DADOS PADRÃO (com city) ==========
+
+    function addBulkEvent(dates, type, desc, city = '') {
         dates.forEach(d => {
             if (!events[d]) events[d] = [];
-            if (!events[d].some(e => e.type === type && (e.description || '') === (desc || '')))
-                events[d].push({ id: uid(), type, description: desc || '' });
+            if (!events[d].some(e => e.type === type && (e.description || '') === (desc || '') && (e.city || '') === city))
+                events[d].push({ id: uid(), type, description: desc || '', city: city || '' });
         });
     }
 
     function seedDefaultEvents() {
         console.log('🌱 Semeando eventos padrão...');
+        // --- Eventos gerais (city vazio) ---
         addBulkEvent(dateRange(2026,0,2,2026,0,17),'Férias docentes','');
         addBulkEvent(dateRange(2026,6,6,2026,6,21),'Férias docentes','');
         addBulkEvent(dateRange(2026,0,18,2026,0,31),'Recesso escolar','');
@@ -716,6 +768,28 @@
         addBulkEvent(singleDate(2026,10,20),'Feriado / Emenda','Consciência Negra');
         addBulkEvent(singleDate(2026,11,24),'Feriado / Emenda','Emenda');
         addBulkEvent(singleDate(2026,11,25),'Feriado / Emenda','Natal');
+
+        // --- Eventos municipais ---
+        const cityEvents = [
+            { city: 'Caieiras', anniversary: '2026-12-14', patron: '2026-06-13', patronDesc: 'Santo Antônio' },
+            { city: 'Cajamar', anniversary: '2026-02-18', patron: '2026-01-20', patronDesc: 'São Sebastião' },
+            { city: 'Francisco Morato', anniversary: '2026-03-21', patron: null, patronDesc: null },
+            { city: 'Franco da Rocha', anniversary: '2026-11-30', patron: '2026-12-08', patronDesc: 'Nossa Sra. da Conceição' },
+            { city: 'Mairiporã', anniversary: '2026-03-27', patron: '2026-09-15', patronDesc: 'Nossa Sra. do Desterro' }
+        ];
+
+        cityEvents.forEach(ce => {
+            // Aniversário
+            if (ce.anniversary) {
+                const d = ce.anniversary.split('-').map(Number);
+                addBulkEvent([dk(d[0], d[1]-1, d[2])], 'Aniversário da cidade', ce.city, ce.city);
+            }
+            // Padroeiro
+            if (ce.patron) {
+                const d = ce.patron.split('-').map(Number);
+                addBulkEvent([dk(d[0], d[1]-1, d[2])], 'Padroeiro(a)', ce.patronDesc + ' - ' + ce.city, ce.city);
+            }
+        });
     }
 
     // ========== RENDERIZAÇÃO ==========
@@ -762,11 +836,20 @@
         });
     }
 
+    // Filtra eventos por município e categoria
     function getVisibleEvents(dateK){
-        const dayEv=events[dateK];
-        if(!dayEv) return [];
-        if(activeFilters.size===0) return dayEv;
-        return dayEv.filter(e=>activeFilters.has(e.type));
+        const dayEv = events[dateK];
+        if (!dayEv) return [];
+        let filtered = dayEv;
+        // Filtro por categoria
+        if (activeFilters.size > 0) {
+            filtered = filtered.filter(e => activeFilters.has(e.type));
+        }
+        // Filtro por município: mostra eventos da cidade selecionada + eventos gerais (city vazio)
+        if (selectedCity !== 'Todos') {
+            filtered = filtered.filter(e => e.city === selectedCity || e.city === '');
+        }
+        return filtered;
     }
 
     function updateHero(){
@@ -775,14 +858,14 @@
         for(const [dateK,arr] of Object.entries(events)){
             const {year,month}=parseKey(dateK);
             if(year===currentYear&&month===currentMonth){
-                const filtered=activeFilters.size===0?arr:arr.filter(e=>activeFilters.has(e.type));
-                total+=filtered.length;
-                feriados+=filtered.filter(e=>e.type==='Feriado / Emenda').length;
+                const filtered = getVisibleEvents(dateK);
+                total += filtered.length;
+                feriados += filtered.filter(e=>e.type==='Feriado / Emenda').length;
             }
         }
         $heroTotal.textContent=total;
         $heroFeriados.textContent=feriados;
-        $heroSub.textContent=total>0?`${total} ação${total>1?'ões':''} programada${total>1?'s':''} neste mês`:'Nenhuma ação programada neste mês';
+        $heroSub.textContent=total>0?`${total} ${total>1?'':''} programada${total>1?'s':''} neste mês`:'Nenhuma ação programada neste mês';
     }
 
     function renderCalendar(){
@@ -829,12 +912,12 @@
         for(const [dateK,arr] of Object.entries(events)){
             const {year,month}=parseKey(dateK);
             if(year===currentYear&&month===currentMonth){
-                const filtered=activeFilters.size===0?arr:arr.filter(e=>activeFilters.has(e.type));
+                const filtered = getVisibleEvents(dateK);
                 filtered.forEach(e=>{ monthEv[e.type]=(monthEv[e.type]||0)+1; total++; });
             }
         }
         if(total===0){ $statsRow.innerHTML=''; return; }
-        let html=`<div class="stat-chip"><strong>${total}</strong> ação${total>1?'ões':''} este mês</div>`;
+        let html=`<div class="stat-chip"><strong>${total}</strong> ${total>1?'':''} este mês</div>`;
         for(const [type,cnt] of Object.entries(monthEv)){
             const short=type.length>24?type.slice(0,24)+'…':type;
             html+=`<div class="stat-chip"><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${getColor(type)};margin-right:4px;vertical-align:middle;"></span>${cnt}× ${short}</div>`;
@@ -858,33 +941,32 @@
         const dateObj=new Date(year,month,day);
         $panelDate.textContent=dateObj.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
-        const dayEv=events[selectedDateKey];
-        if(!dayEv||dayEv.length===0){
+        const dayEv = events[selectedDateKey];
+        if(!dayEv || dayEv.length===0){
             $eventList.innerHTML='<div class="empty-state">Nenhuma ação neste dia</div>';
             return;
         }
 
-        // Exibe apenas os eventos, sem botão de remover
+        // Exibe apenas os eventos, com indicação do município (se houver)
         $eventList.innerHTML=dayEv.map(ev=>{
             const c=getColor(ev.type);
             return `<div class="event-card fade-in" style="border-left-color:${c}">
                 <div class="event-card-content">
                     <div class="event-card-type">${ev.type}</div>
-                    ${ev.description?`<div class="event-card-desc">${ev.description}</div>`:''}
+                    ${ev.description ? `<div class="event-card-desc">${ev.description}</div>` : ''}
+                    ${ev.city ? `<div class="event-card-desc" style="font-weight:500;color:#0a2f6c;">📍 ${ev.city}</div>` : ''}
                 </div>
             </div>`;
         }).join('');
     }
 
-    // ========== INICIALIZAÇÃO CORRIGIDA ==========
+    // ========== INICIALIZAÇÃO ==========
 
     async function init(){
         isLoading = true;
 
-        // 1. Carregar dados do Firebase
         await loadEventsFromFirebase();
 
-        // 2. Se não houver dados, semear e salvar
         if (Object.keys(events).length === 0) {
             console.log('📭 Nenhum evento encontrado. Gerando dados padrão...');
             seedDefaultEvents();
@@ -893,31 +975,26 @@
             console.log(`📊 ${Object.keys(events).length} dias com eventos carregados.`);
         }
 
-        // 3. Renderizar componentes estáticos
         renderWeekdays();
         renderLegend();
         renderFilters();
 
-        // 4. Definir mês atual (baseado na data de hoje, se for 2026)
         const t=new Date();
         const tk=todayKey();
         const pk=parseKey(tk);
         if(pk.year===2026){
             currentMonth=pk.month;
         } else {
-            currentMonth=0; // Janeiro
+            currentMonth=0;
         }
         currentYear=2026;
 
-        // 5. Finalizar carregamento e renderizar calendário
         isLoading = false;
         renderCalendar();
 
-        // 6. Selecionar um dia (prioridade: hoje se houver eventos, senão primeiro dia com evento do mês)
         if (pk.year===2026 && events[tk]) {
             selectDay(tk);
         } else {
-            // Buscar primeiro dia com evento no mês atual
             let firstEventDay = null;
             for (const dateKey of Object.keys(events).sort()) {
                 const {year, month} = parseKey(dateKey);
@@ -927,13 +1004,10 @@
                 }
             }
             if (firstEventDay) selectDay(firstEventDay);
-            else {
-                // Se não houver eventos no mês, selecionar 2 de janeiro (ou qualquer dia)
-                selectDay(dk(2026,0,2));
-            }
+            else selectDay(dk(2026,0,2));
         }
 
-        // 7. Event listeners de navegação
+        // Navegação
         $('prevMonth').addEventListener('click',()=>{
             currentMonth--;
             if(currentMonth<0){currentMonth=11;currentYear--;}
@@ -945,6 +1019,13 @@
             if(currentMonth>11){currentMonth=0;currentYear++;}
             selectedDateKey=null;
             renderCalendar(); renderPanel();
+        });
+
+        // Filtro por município
+        $cityFilter.addEventListener('change', () => {
+            selectedCity = $cityFilter.value;
+            renderCalendar();
+            renderPanel();
         });
 
         console.log('✅ Calendário carregado com sucesso!');
